@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GitHub Org Analytics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c10;
+    --surface: #10141c;
+    --surface2: #161b26;
+    --border: #1e2736;
+    --accent: #00e5a0;
+    --accent2: #0088ff;
+    --accent3: #ff6b35;
+    --accent4: #c77dff;
+    --text: #e8edf5;
+    --text-muted: #5a6680;
+    --text-dim: #8896b0;
+    --danger: #ff4466;
+    --success: #00e5a0;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid noise texture */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 40px 40px;
+    opacity: 0.3;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .app { position: relative; z-index: 1; }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(10,12,16,0.8);
+    backdrop-filter: blur(12px);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+  }
+
+  .logo-icon {
+    width: 32px; height: 32px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .logo-icon svg { fill: #0a0c10; width: 18px; }
+
+  .header-right { display: flex; align-items: center; gap: 16px; }
+
+  .period-selector {
+    display: flex;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .period-btn {
+    padding: 6px 14px;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border-right: 1px solid var(--border);
+  }
+  .period-btn:last-child { border-right: none; }
+  .period-btn.active {
+    background: var(--accent);
+    color: #0a0c10;
+    font-weight: 600;
+  }
+  .period-btn:hover:not(.active) { background: var(--surface2); color: var(--text); }
+
+  /* ── CONFIG PANEL ── */
+  .config-panel {
+    margin: 24px 32px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    display: flex;
+    gap: 16px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .field label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .field input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+    min-width: 200px;
+  }
+
+  .field input:focus { border-color: var(--accent); }
+  .field input::placeholder { color: var(--text-muted); }
+
+  .field input[type="password"] { min-width: 280px; letter-spacing: 0.15em; }
+
+  .btn-discover {
+    padding: 9px 24px;
+    background: var(--surface2);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .btn-discover:hover { background: rgba(0,229,160,0.1); transform: translateY(-1px); }
+  .btn-discover:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  .repo-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--surface);
+    cursor: pointer;
+    transition: background 0.15s;
+    user-select: none;
+  }
+  .repo-row:hover { background: var(--surface2); }
+  .repo-row.hidden { display: none; }
+
+  .repo-check {
+    width: 16px; height: 16px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+    font-size: 10px;
+  }
+  .repo-row.selected .repo-check {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #0a0c10;
+  }
+
+  .repo-row-info { flex: 1; min-width: 0; }
+  .repo-row-name { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .repo-row-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; display: flex; gap: 8px; }
+
+  .lang-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 2px; }
+
+  .btn-load {
+    padding: 9px 24px;
+    background: var(--accent);
+    color: #0a0c10;
+    border: none;
+    border-radius: 6px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .btn-load:hover { background: #00ffb3; transform: translateY(-1px); }
+  .btn-load:active { transform: translateY(0); }
+  .btn-load:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  /* ── STATUS BAR ── */
+  .status-bar {
+    margin: 0 32px 16px;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    display: none;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .status-bar.info { background: rgba(0,136,255,0.1); border: 1px solid rgba(0,136,255,0.3); color: var(--accent2); display: flex; }
+  .status-bar.error { background: rgba(255,68,102,0.1); border: 1px solid rgba(255,68,102,0.3); color: var(--danger); display: flex; }
+  .status-bar.success { background: rgba(0,229,160,0.1); border: 1px solid rgba(0,229,160,0.3); color: var(--accent); display: flex; }
+
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── KPI CARDS ── */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin: 0 32px 24px;
+  }
+
+  .kpi-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+
+  .kpi-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+  .kpi-card.c1::before { background: var(--accent); }
+  .kpi-card.c2::before { background: var(--accent2); }
+  .kpi-card.c3::before { background: var(--accent3); }
+  .kpi-card.c4::before { background: var(--accent4); }
+  .kpi-card.c5::before { background: #ffd166; }
+
+  .kpi-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+
+  .kpi-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1;
+  }
+
+  .kpi-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+  /* ── MAIN GRID ── */
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin: 0 32px 20px;
+  }
+
+  .full-width { grid-column: 1 / -1; }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .panel-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .panel-body { padding: 20px; }
+
+  .chart-wrap { position: relative; height: 260px; }
+
+  /* ── DEV TABLE ── */
+  .dev-table { width: 100%; border-collapse: collapse; }
+
+  .dev-table th {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .dev-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(30,39,54,0.5);
+    vertical-align: middle;
+  }
+
+  .dev-table tr:last-child td { border-bottom: none; }
+  .dev-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .dev-name {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 500;
+  }
+
+  .avatar {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent2), var(--accent4));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: white;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+  .bar-cell { min-width: 120px; }
+
+  .bar-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .bar-bg {
+    flex: 1;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.6s ease;
+  }
+
+  .bar-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    min-width: 30px;
+    text-align: right;
+  }
+
+  /* ── PR TABLE ── */
+  .pr-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .pr-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    transition: border-color 0.2s;
+  }
+
+  .pr-item:hover { border-color: var(--accent2); }
+
+  .pr-state {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 7px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    flex-shrink: 0;
+  }
+
+  .pr-state.open { background: rgba(0,229,160,0.15); color: var(--accent); }
+  .pr-state.closed { background: rgba(255,68,102,0.12); color: var(--danger); }
+  .pr-state.merged { background: rgba(199,125,255,0.15); color: var(--accent4); }
+
+  .pr-info { flex: 1; min-width: 0; }
+  .pr-title { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pr-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  .pr-reviews {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  /* ── REPO CHIPS ── */
+  .repo-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 32px;
+    align-items: center;
+  }
+
+  .repo-chip {
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: var(--text-dim);
+    background: var(--surface);
+    user-select: none;
+  }
+
+  .repo-chip.active {
+    border-color: var(--accent2);
+    background: rgba(0,136,255,0.12);
+    color: var(--accent2);
+  }
+
+  .repo-chip:hover:not(.active) { border-color: var(--text-muted); color: var(--text); }
+
+  .repo-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  /* ── EMPTY STATE ── */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 64px 32px;
+    color: var(--text-muted);
+    text-align: center;
+    gap: 16px;
+  }
+
+  .empty-icon { font-size: 48px; opacity: 0.3; }
+  .empty-title { font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: var(--text-dim); }
+  .empty-sub { font-size: 12px; color: var(--text-muted); max-width: 300px; line-height: 1.6; }
+
+  /* ── FOOTER ── */
+  footer {
+    text-align: center;
+    padding: 24px 32px;
+    color: var(--text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    border-top: 1px solid var(--border);
+    margin-top: 8px;
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: rgba(0,229,160,0.1);
+    border: 1px solid rgba(0,229,160,0.2);
+    border-radius: 4px;
+    font-size: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--accent);
+  }
+
+  .repo-tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+
+  @media (max-width: 768px) {
+    .main-grid { grid-template-columns: 1fr; }
+    .config-panel { flex-direction: column; }
+    .field input { min-width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">
+        <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+      </div>
+      GH·ANALYTICS
+    </div>
+    <div class="header-right">
+      <div class="period-selector" id="periodSelector">
+        <button class="period-btn active" data-days="30" onclick="setPeriod(this)">30j</button>
+        <button class="period-btn" data-days="90" onclick="setPeriod(this)">3m</button>
+        <button class="period-btn" data-days="180" onclick="setPeriod(this)">6m</button>
+        <button class="period-btn" data-days="270" onclick="setPeriod(this)">9m</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- CONFIG -->
+  <div class="config-panel">
+    <div class="field">
+      <label>Organisation GitHub</label>
+      <input type="text" id="orgInput" placeholder="ex: microsoft" />
+    </div>
+    <div class="field">
+      <label>Token GitHub (PAT)</label>
+      <input type="password" id="tokenInput" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" />
+    </div>
+    <button class="btn-discover" id="discoverBtn" onclick="discoverRepos()">⬡ Découvrir les repos</button>
+  <button class="btn-load" id="loadBtn" onclick="loadData()" style="display:none">▶ Analyser la sélection</button>
+  </div>
+
+  <!-- REPO SELECTOR -->
+  <div id="repoSelector" style="display:none; margin: 0 32px 16px;">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+      <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-dim)">
+          ⬡ Sélectionner les repos à analyser
+        </span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="repoSearch" placeholder="Filtrer par nom…" oninput="filterRepoList()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-family:'IBM Plex Mono',monospace;font-size:12px;outline:none;width:180px;" />
+          <button onclick="selectAllRepos(true)" style="padding:5px 12px;background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;">Tout</button>
+          <button onclick="selectAllRepos(false)" style="padding:5px 12px;background:none;border:1px solid var(--border);border-radius:6px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;">Aucun</button>
+          <span id="selCount" style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--accent);">0 sélectionné(s)</span>
+        </div>
+      </div>
+      <div id="repoGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1px;background:var(--border);max-height:320px;overflow-y:auto;"></div>
+    </div>
+  </div>
+
+  <!-- STATUS -->
+  <div class="status-bar" id="statusBar"></div>
+
+  <!-- REPO FILTER -->
+  <div class="repo-filter" id="repoFilter" style="display:none">
+    <span class="repo-label">Filtrer :</span>
+  </div>
+
+  <!-- KPI -->
+  <div class="kpi-grid" id="kpiGrid">
+    <div class="kpi-card c1"><div class="kpi-label">Repos analysés</div><div class="kpi-value" id="kpiRepos">—</div></div>
+    <div class="kpi-card c2"><div class="kpi-label">Commits</div><div class="kpi-value" id="kpiCommits">—</div></div>
+    <div class="kpi-card c3"><div class="kpi-label">Pull Requests</div><div class="kpi-value" id="kpiPRs">—</div></div>
+    <div class="kpi-card c4"><div class="kpi-label">Développeurs actifs</div><div class="kpi-value" id="kpiDevs">—</div></div>
+    <div class="kpi-card c5"><div class="kpi-label">Reviews</div><div class="kpi-value" id="kpiReviews">—</div></div>
+  </div>
+
+  <!-- CHARTS -->
+  <div class="main-grid" id="mainGrid">
+
+    <!-- Activité dans le temps -->
+    <div class="panel full-width">
+      <div class="panel-header">
+        <span class="panel-title">⬡ Activité dans le temps — commits</span>
+        <span class="tag" id="periodTag">30 jours</span>
+      </div>
+      <div class="panel-body">
+        <div class="chart-wrap">
+          <canvas id="timeChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Commits par dev -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">⬡ Commits par développeur</span>
+      </div>
+      <div class="panel-body">
+        <div class="chart-wrap" style="height:300px">
+          <canvas id="devChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- PR Distribution -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">⬡ Pull Requests — état</span>
+      </div>
+      <div class="panel-body">
+        <div class="chart-wrap" style="height:300px">
+          <canvas id="prChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dev leaderboard -->
+    <div class="panel full-width">
+      <div class="panel-header">
+        <span class="panel-title">⬡ Classement développeurs</span>
+      </div>
+      <div class="panel-body" id="devTableWrap">
+        <div class="empty-state">
+          <div class="empty-icon">⬡</div>
+          <div class="empty-title">Aucune donnée</div>
+          <div class="empty-sub">Configurez votre organisation et token, puis cliquez sur Analyser.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PR List -->
+    <div class="panel full-width">
+      <div class="panel-header">
+        <span class="panel-title">⬡ Dernières Pull Requests</span>
+      </div>
+      <div class="panel-body" id="prListWrap">
+        <div class="empty-state">
+          <div class="empty-icon">⬡</div>
+          <div class="empty-title">Aucune donnée</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>GH·ANALYTICS — Token stocké localement en mémoire uniquement · Données temps réel via GitHub API v3</footer>
+
+</div>
+
+<script>
+// ── STATE ──
+let currentDays = 30;
+let allData = null;
+let activeRepos = new Set();
+let charts = {};
+let discoveredRepos = [];
+let selectedRepos = new Set();
+
+// ── LANG COLORS ──
+const langColors = {
+  JavaScript:'#f1e05a', TypeScript:'#3178c6', Python:'#3572A5', Go:'#00ADD8',
+  Rust:'#dea584', Java:'#b07219', Ruby:'#701516', PHP:'#4F5D95',
+  'C++':'#f34b7d', C:'#555555', 'C#':'#178600', Kotlin:'#A97BFF',
+  Swift:'#F05138', Shell:'#89e051', Vue:'#41b883', HTML:'#e34c26',
+  CSS:'#563d7c', Dart:'#00B4AB', default:'#8896b0'
+};
+
+// ── DISCOVER REPOS ──
+async function discoverRepos() {
+  const org = document.getElementById('orgInput').value.trim();
+  const token = document.getElementById('tokenInput').value.trim();
+  if (!org) { setStatus('⚠ Veuillez saisir un nom d\'organisation.', 'error'); return; }
+  if (!token) { setStatus('⚠ Token requis.', 'error'); return; }
+
+  document.getElementById('discoverBtn').disabled = true;
+  document.getElementById('loadBtn').style.display = 'none';
+  document.getElementById('repoSelector').style.display = 'none';
+  setStatus('Chargement de la liste des repos…');
+
+  const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' };
+  try {
+    let repos = [];
+    let page = 1;
+    while (true) {
+      const res = await fetch(`https://api.github.com/orgs/${org}/repos?per_page=100&page=${page}&sort=pushed`, { headers });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message || `HTTP ${res.status}`); }
+      const data = await res.json();
+      if (!data.length) break;
+      repos = repos.concat(data);
+      if (data.length < 100) break;
+      page++;
+    }
+    discoveredRepos = repos;
+    selectedRepos = new Set(repos.map(r => r.name));
+    buildRepoSelector(repos);
+    document.getElementById('repoSelector').style.display = 'block';
+    document.getElementById('loadBtn').style.display = 'inline-flex';
+    setStatus(`✓ ${repos.length} repos trouvés — sélectionnez ceux à analyser`, 'success');
+    setTimeout(clearStatus, 4000);
+  } catch(err) {
+    setStatus(`✗ Erreur : ${err.message}`, 'error');
+  }
+  document.getElementById('discoverBtn').disabled = false;
+}
+
+// ── REPO SELECTOR ──
+function buildRepoSelector(repos) {
+  const grid = document.getElementById('repoGrid');
+  grid.innerHTML = '';
+  repos.forEach(repo => {
+    const lc = langColors[repo.language] || langColors.default;
+    const pushed = repo.pushed_at
+      ? new Date(repo.pushed_at).toLocaleDateString('fr', {day:'2-digit', month:'short', year:'2-digit'})
+      : '—';
+    const stars = repo.stargazers_count > 0 ? `★ ${repo.stargazers_count}` : '';
+    const row = document.createElement('div');
+    row.className = 'repo-row selected';
+    row.dataset.name = repo.name;
+    row.innerHTML = `
+      <div class="repo-check">✓</div>
+      <div class="repo-row-info">
+        <div class="repo-row-name">${repo.name}</div>
+        <div class="repo-row-meta">
+          ${repo.language ? `<span style="display:flex;align-items:center;gap:4px"><span class="lang-dot" style="background:${lc}"></span>${repo.language}</span>` : ''}
+          <span>Push: ${pushed}</span>
+          ${stars ? `<span>${stars}</span>` : ''}
+        </div>
+      </div>`;
+    row.onclick = () => {
+      if (selectedRepos.has(repo.name)) { selectedRepos.delete(repo.name); row.classList.remove('selected'); }
+      else { selectedRepos.add(repo.name); row.classList.add('selected'); }
+      updateSelCount();
+    };
+    grid.appendChild(row);
+  });
+  updateSelCount();
+}
+
+function selectAllRepos(val) {
+  document.querySelectorAll('.repo-row:not(.hidden)').forEach(row => {
+    if (val) { selectedRepos.add(row.dataset.name); row.classList.add('selected'); }
+    else { selectedRepos.delete(row.dataset.name); row.classList.remove('selected'); }
+  });
+  updateSelCount();
+}
+
+function filterRepoList() {
+  const q = document.getElementById('repoSearch').value.toLowerCase();
+  document.querySelectorAll('.repo-row').forEach(row =>
+    row.classList.toggle('hidden', !row.dataset.name.toLowerCase().includes(q))
+  );
+}
+
+function updateSelCount() {
+  document.getElementById('selCount').textContent = `${selectedRepos.size} sélectionné(s)`;
+  document.getElementById('loadBtn').disabled = selectedRepos.size === 0;
+}
+
+// ── PERIOD ──
+function setPeriod(btn) {
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentDays = parseInt(btn.dataset.days);
+  const labels = {30:'30 jours', 90:'3 mois', 180:'6 mois', 270:'9 mois'};
+  document.getElementById('periodTag').textContent = labels[currentDays];
+  if (allData) renderAll();
+}
+
+// ── STATUS ──
+function setStatus(msg, type='info') {
+  const el = document.getElementById('statusBar');
+  el.className = 'status-bar ' + type;
+  el.innerHTML = type === 'info' ? `<div class="spinner"></div><span>${msg}</span>` : `<span>${msg}</span>`;
+}
+
+function clearStatus() {
+  document.getElementById('statusBar').className = 'status-bar';
+}
+
+// ── LOAD ──
+async function loadData() {
+  const org = document.getElementById('orgInput').value.trim();
+  const token = document.getElementById('tokenInput').value.trim();
+  if (!org || !token) { setStatus('⚠ Organisation et token requis.', 'error'); return; }
+  if (selectedRepos.size === 0) { setStatus('⚠ Sélectionnez au moins un repo.', 'error'); return; }
+
+  document.getElementById('loadBtn').disabled = true;
+  document.getElementById('discoverBtn').disabled = true;
+  const since = new Date(Date.now() - 270 * 86400000).toISOString();
+  const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' };
+  const repos = discoveredRepos.filter(r => selectedRepos.has(r.name));
+
+  const commitMap = {};
+  const prList = [];
+  const reviewMap = {};
+
+  const fetchRepo = async (repo) => {
+    const repoName = repo.name;
+    try {
+      let cPage = 1;
+      while (true) {
+        const r = await fetch(`https://api.github.com/repos/${org}/${repoName}/commits?since=${since}&per_page=100&page=${cPage}`, { headers });
+        if (!r.ok) break;
+        const commits = await r.json();
+        if (!commits.length) break;
+        commits.forEach(c => {
+          const login = c.author?.login || c.commit?.author?.name || 'unknown';
+          if (!commitMap[login]) commitMap[login] = [];
+          commitMap[login].push({ date: c.commit.author.date, repo: repoName });
+        });
+        if (commits.length < 100) break;
+        cPage++;
+      }
+    } catch(e) {}
+
+    try {
+      const r = await fetch(`https://api.github.com/repos/${org}/${repoName}/pulls?state=all&per_page=50&sort=updated&direction=desc`, { headers });
+      if (r.ok) {
+        const prs = await r.json();
+        prs.forEach(pr => {
+          if (new Date(pr.created_at) >= new Date(since)) prList.push({ ...pr, repoName });
+        });
+        for (const pr of prs.slice(0, 10)) {
+          try {
+            const rr = await fetch(`https://api.github.com/repos/${org}/${repoName}/pulls/${pr.number}/reviews`, { headers });
+            if (rr.ok) {
+              const reviews = await rr.json();
+              reviews.forEach(rv => { const l = rv.user?.login || 'unknown'; reviewMap[l] = (reviewMap[l] || 0) + 1; });
+            }
+          } catch(e) {}
+        }
+      }
+    } catch(e) {}
+  };
+
+  try {
+    for (let i = 0; i < repos.length; i += 5) {
+      setStatus(`Analyse… ${i}/${repos.length} repos traités`);
+      await Promise.all(repos.slice(i, i + 5).map(fetchRepo));
+    }
+    allData = { repos, commitMap, prList, reviewMap, since };
+    activeRepos = new Set(repos.map(r => r.name));
+    buildRepoFilter(repos);
+    renderAll();
+    setStatus(`✓ Analyse complète — ${repos.length} repos, ${prList.length} PRs`, 'success');
+    setTimeout(clearStatus, 3000);
+  } catch(err) {
+    setStatus(`✗ Erreur : ${err.message}`, 'error');
+  }
+
+  document.getElementById('loadBtn').disabled = selectedRepos.size === 0;
+  document.getElementById('discoverBtn').disabled = false;
+}
+
+// ── REPO FILTER ──
+function buildRepoFilter(repos) {
+  const wrap = document.getElementById('repoFilter');
+  wrap.style.display = 'flex';
+  wrap.innerHTML = '<span class="repo-label">Filtrer :</span>';
+  const allChip = document.createElement('div');
+  allChip.className = 'repo-chip active';
+  allChip.textContent = 'Tous';
+  allChip.onclick = () => {
+    activeRepos = new Set(repos.map(r => r.name));
+    document.querySelectorAll('.repo-chip').forEach(c => c.classList.toggle('active', c.textContent === 'Tous'));
+    renderAll();
+  };
+  wrap.appendChild(allChip);
+  repos.forEach(repo => {
+    const chip = document.createElement('div');
+    chip.className = 'repo-chip active';
+    chip.textContent = repo.name;
+    chip.onclick = () => {
+      if (activeRepos.has(repo.name)) {
+        activeRepos.delete(repo.name);
+        chip.classList.remove('active');
+      } else {
+        activeRepos.add(repo.name);
+        chip.classList.add('active');
+      }
+      document.querySelectorAll('.repo-chip')[0].classList.toggle('active', activeRepos.size === repos.length);
+      renderAll();
+    };
+    wrap.appendChild(chip);
+  });
+}
+
+// ── FILTER DATA ──
+function filteredCommits() {
+  if (!allData) return {};
+  const cutoff = new Date(Date.now() - currentDays * 86400000);
+  const result = {};
+  Object.entries(allData.commitMap).forEach(([login, commits]) => {
+    const filtered = commits.filter(c => activeRepos.has(c.repo) && new Date(c.date) >= cutoff);
+    if (filtered.length) result[login] = filtered;
+  });
+  return result;
+}
+
+function filteredPRs() {
+  if (!allData) return [];
+  const cutoff = new Date(Date.now() - currentDays * 86400000);
+  return allData.prList.filter(pr => activeRepos.has(pr.repoName) && new Date(pr.created_at) >= cutoff);
+}
+
+// ── RENDER ALL ──
+function renderAll() {
+  if (!allData) return;
+  const commits = filteredCommits();
+  const prs = filteredPRs();
+
+  // KPIs
+  const totalCommits = Object.values(commits).reduce((s, a) => s + a.length, 0);
+  const prOpen = prs.filter(p => p.state === 'open').length;
+  const prMerged = prs.filter(p => p.merged_at).length;
+  const prClosed = prs.filter(p => p.state === 'closed' && !p.merged_at).length;
+  const totalReviews = Object.values(allData.reviewMap).reduce((s, v) => s + v, 0);
+
+  document.getElementById('kpiRepos').textContent = activeRepos.size;
+  document.getElementById('kpiCommits').textContent = totalCommits.toLocaleString('fr');
+  document.getElementById('kpiPRs').textContent = prs.length.toLocaleString('fr');
+  document.getElementById('kpiDevs').textContent = Object.keys(commits).length;
+  document.getElementById('kpiReviews').textContent = totalReviews.toLocaleString('fr');
+
+  renderTimeChart(commits);
+  renderDevChart(commits);
+  renderPRChart(prOpen, prMerged, prClosed);
+  renderDevTable(commits);
+  renderPRList(prs);
+}
+
+// ── TIME CHART ──
+function renderTimeChart(commits) {
+  const days = currentDays;
+  const bucketCount = days <= 30 ? days : Math.ceil(days / 7);
+  const bucketSize = days <= 30 ? 1 : 7;
+
+  const buckets = {};
+  for (let i = 0; i < bucketCount; i++) {
+    const d = new Date(Date.now() - (bucketCount - 1 - i) * bucketSize * 86400000);
+    const key = days <= 30
+      ? d.toLocaleDateString('fr', { day: '2-digit', month: 'short' })
+      : `S${getWeekNumber(d)}`;
+    buckets[key] = 0;
+  }
+
+  Object.values(commits).flat().forEach(c => {
+    const d = new Date(c.date);
+    const daysAgo = Math.floor((Date.now() - d) / 86400000);
+    const idx = bucketCount - 1 - Math.floor(daysAgo / bucketSize);
+    if (idx >= 0) {
+      const key = Object.keys(buckets)[idx];
+      if (key !== undefined) buckets[key]++;
+    }
+  });
+
+  const labels = Object.keys(buckets);
+  const values = Object.values(buckets);
+
+  if (charts.time) charts.time.destroy();
+  const ctx = document.getElementById('timeChart').getContext('2d');
+  charts.time = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Commits',
+        data: values,
+        backgroundColor: 'rgba(0,229,160,0.25)',
+        borderColor: '#00e5a0',
+        borderWidth: 1.5,
+        borderRadius: 3,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: 'rgba(30,39,54,0.6)' }, ticks: { color: '#5a6680', font: { family: "'IBM Plex Mono'" } } },
+        y: { grid: { color: 'rgba(30,39,54,0.6)' }, ticks: { color: '#5a6680', font: { family: "'IBM Plex Mono'" } } }
+      }
+    }
+  });
+}
+
+function getWeekNumber(d) {
+  const onejan = new Date(d.getFullYear(), 0, 1);
+  return Math.ceil((((d - onejan) / 86400000) + onejan.getDay() + 1) / 7);
+}
+
+// ── DEV CHART ──
+function renderDevChart(commits) {
+  const sorted = Object.entries(commits).sort((a, b) => b[1].length - a[1].length).slice(0, 10);
+  const labels = sorted.map(([l]) => l);
+  const values = sorted.map(([, c]) => c.length);
+  const colors = ['#00e5a0','#0088ff','#ff6b35','#c77dff','#ffd166','#ef476f','#06d6a0','#118ab2','#073b4c','#f4a261'];
+
+  if (charts.dev) charts.dev.destroy();
+  const ctx = document.getElementById('devChart').getContext('2d');
+  charts.dev = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Commits',
+        data: values,
+        backgroundColor: colors.map(c => c + '33'),
+        borderColor: colors,
+        borderWidth: 1.5,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: 'rgba(30,39,54,0.6)' }, ticks: { color: '#5a6680', font: { family: "'IBM Plex Mono'" } } },
+        y: { grid: { display: false }, ticks: { color: '#8896b0', font: { family: "'IBM Plex Mono'", size: 11 } } }
+      }
+    }
+  });
+}
+
+// ── PR CHART ──
+function renderPRChart(open, merged, closed) {
+  if (charts.pr) charts.pr.destroy();
+  const ctx = document.getElementById('prChart').getContext('2d');
+  charts.pr = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Ouvertes', 'Mergées', 'Fermées'],
+      datasets: [{
+        data: [open, merged, closed],
+        backgroundColor: ['rgba(0,229,160,0.25)', 'rgba(199,125,255,0.25)', 'rgba(255,68,102,0.2)'],
+        borderColor: ['#00e5a0', '#c77dff', '#ff4466'],
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '65%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { color: '#8896b0', font: { family: "'IBM Plex Mono'", size: 11 }, padding: 16, boxWidth: 12 }
+        }
+      }
+    }
+  });
+}
+
+// ── DEV TABLE ──
+function renderDevTable(commits) {
+  const devs = Object.entries(commits).sort((a, b) => b[1].length - a[1].length);
+  const maxCommits = devs[0]?.[1].length || 1;
+  const colors = ['#00e5a0','#0088ff','#ff6b35','#c77dff','#ffd166','#ef476f','#06d6a0','#118ab2','#073b4c','#f4a261'];
+
+  if (!devs.length) {
+    document.getElementById('devTableWrap').innerHTML = `<div class="empty-state"><div class="empty-icon">⬡</div><div class="empty-title">Aucun commit sur la période</div></div>`;
+    return;
+  }
+
+  const rows = devs.slice(0, 20).map(([login, c], i) => {
+    const reposSet = new Set(c.map(x => x.repo));
+    const prs = filteredPRs().filter(p => p.user?.login === login).length;
+    const reviews = allData.reviewMap[login] || 0;
+    const color = colors[i % colors.length];
+    const initials = login.slice(0, 2).toUpperCase();
+    const pct = Math.round((c.length / maxCommits) * 100);
+
+    return `
+      <tr>
+        <td>
+          <div class="dev-name">
+            <div class="avatar" style="background:linear-gradient(135deg, ${color}44, ${color}88)">
+              <img src="https://avatars.githubusercontent.com/${login}?s=40" onerror="this.style.display='none'" />
+              <span style="position:absolute">${initials}</span>
+            </div>
+            <span>${login}</span>
+          </div>
+        </td>
+        <td class="bar-cell">
+          <div class="bar-wrap">
+            <div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
+            <span class="bar-val">${c.length}</span>
+          </div>
+        </td>
+        <td style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8896b0">${prs}</td>
+        <td style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8896b0">${reviews}</td>
+        <td>
+          ${[...reposSet].slice(0, 3).map(r => `<span class="repo-tag">${r}</span>`).join(' ')}
+          ${reposSet.size > 3 ? `<span style="color:#5a6680;font-size:11px">+${reposSet.size - 3}</span>` : ''}
+        </td>
+      </tr>`;
+  }).join('');
+
+  document.getElementById('devTableWrap').innerHTML = `
+    <table class="dev-table">
+      <thead>
+        <tr>
+          <th>Développeur</th>
+          <th>Commits</th>
+          <th>PRs</th>
+          <th>Reviews</th>
+          <th>Repos</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── PR LIST ──
+function renderPRList(prs) {
+  if (!prs.length) {
+    document.getElementById('prListWrap').innerHTML = `<div class="empty-state"><div class="empty-icon">⬡</div><div class="empty-title">Aucune PR sur la période</div></div>`;
+    return;
+  }
+
+  const items = prs.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)).slice(0, 20).map(pr => {
+    const state = pr.merged_at ? 'merged' : pr.state;
+    const stateLabel = pr.merged_at ? 'Mergée' : pr.state === 'open' ? 'Ouverte' : 'Fermée';
+    const date = new Date(pr.updated_at).toLocaleDateString('fr', { day: '2-digit', month: 'short' });
+    return `
+      <div class="pr-item">
+        <span class="pr-state ${state}">${stateLabel}</span>
+        <div class="pr-info">
+          <div class="pr-title">${pr.title}</div>
+          <div class="pr-meta">${pr.repoName} · ${pr.user?.login} · ${date}</div>
+        </div>
+        <div class="pr-reviews">#${pr.number}</div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('prListWrap').innerHTML = `<div class="pr-list">${items}</div>`;
+}
+</script>
+</body>
+</html>

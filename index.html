@@ -610,7 +610,12 @@
 
   <!-- REPO FILTER -->
   <div class="repo-filter" id="repoFilter" style="display:none">
-    <span class="repo-label">Filtrer :</span>
+    <span class="repo-label">Repos :</span>
+  </div>
+
+  <!-- ACCOUNT FILTER -->
+  <div class="repo-filter" id="accountFilter" style="display:none">
+    <span class="repo-label">Comptes :</span>
   </div>
 
   <!-- KPI -->
@@ -700,6 +705,7 @@
 let currentDays = 30;
 let allData = null;
 let activeRepos = new Set();
+let activeAccounts = new Set();
 let charts = {};
 let discoveredRepos = [];
 let selectedRepos = new Set();
@@ -838,9 +844,35 @@ async function loadData() {
   const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' };
   const repos = discoveredRepos.filter(r => selectedRepos.has(r.name));
 
-  const commitMap = {};
+  const commitMap = {};   // login → [{date, repo, type}]  type: 'author'|'coauthor'
   const prList = [];
   const reviewMap = {};
+  const emailLoginCache = {}; // email → login (cache résolution)
+
+  // Résolution email → login GitHub
+  const resolveEmail = async (email) => {
+    if (!email) return null;
+    if (emailLoginCache[email] !== undefined) return emailLoginCache[email];
+    // Emails GitHub noreply contiennent le login directement : ID+login@users.noreply.github.com
+    const noreply = email.match(/^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$/i);
+    if (noreply) { emailLoginCache[email] = noreply[1]; return noreply[1]; }
+    try {
+      const r = await fetch(`https://api.github.com/search/users?q=${encodeURIComponent(email)}+in:email`, { headers });
+      if (r.ok) {
+        const d = await r.json();
+        const login = d.items?.[0]?.login || email;
+        emailLoginCache[email] = login;
+        return login;
+      }
+    } catch(e) {}
+    emailLoginCache[email] = email; // fallback: email brut
+    return email;
+  };
+
+  const addCommit = (login, date, repo, type) => {
+    if (!commitMap[login]) commitMap[login] = [];
+    commitMap[login].push({ date, repo, type });
+  };
 
   const fetchRepo = async (repo) => {
     const repoName = repo.name;
@@ -851,11 +883,30 @@ async function loadData() {
         if (!r.ok) break;
         const commits = await r.json();
         if (!commits.length) break;
-        commits.forEach(c => {
+
+        // Traiter en parallèle pour la résolution des co-auteurs
+        await Promise.all(commits.map(async c => {
           const login = c.author?.login || c.commit?.author?.name || 'unknown';
-          if (!commitMap[login]) commitMap[login] = [];
-          commitMap[login].push({ date: c.commit.author.date, repo: repoName });
-        });
+          const date = c.commit.author.date;
+          addCommit(login, date, repoName, 'author');
+
+          // Parser les co-auteurs dans le message de commit
+          const msg = c.commit.message || '';
+          const coAuthorRegex = /^Co-authored-by:\s*.+?\s*<([^>]+)>/gim;
+          let match;
+          const coEmails = [];
+          while ((match = coAuthorRegex.exec(msg)) !== null) {
+            coEmails.push(match[1]);
+          }
+          // Résoudre les emails en logins (limité pour ne pas surcharger l'API)
+          for (const email of coEmails) {
+            const coLogin = await resolveEmail(email);
+            if (coLogin && coLogin !== login) {
+              addCommit(coLogin, date, repoName, 'coauthor');
+            }
+          }
+        }));
+
         if (commits.length < 100) break;
         cPage++;
       }
@@ -888,7 +939,13 @@ async function loadData() {
     }
     allData = { repos, commitMap, prList, reviewMap, since };
     activeRepos = new Set(repos.map(r => r.name));
+    // Collecter tous les logins et initialiser le filtre comptes
+    const allLogins = new Set(Object.keys(commitMap));
+    Object.values(prList).forEach(pr => { if (pr.user?.login) allLogins.add(pr.user.login); });
+    Object.keys(reviewMap).forEach(l => allLogins.add(l));
+    activeAccounts = new Set(allLogins);
     buildRepoFilter(repos);
+    buildAccountFilter([...allLogins].sort());
     renderAll();
     setStatus(`✓ Analyse complète — ${repos.length} repos, ${prList.length} PRs`, 'success');
     setTimeout(clearStatus, 3000);
@@ -933,12 +990,88 @@ function buildRepoFilter(repos) {
   });
 }
 
+// ── ACCOUNT FILTER ──
+// Patterns connus de bots/comptes de service
+const BOT_PATTERNS = [/bot$/i, /\[bot\]/i, /dependabot/i, /renovate/i, /greenkeeper/i, /snyk/i, /github-actions/i, /codecov/i, /semantic-release/i, /auto-merge/i];
+const isBot = login => BOT_PATTERNS.some(p => p.test(login));
+
+function buildAccountFilter(logins) {
+  const wrap = document.getElementById('accountFilter');
+  wrap.style.display = 'flex';
+  wrap.innerHTML = '<span class="repo-label">Comptes :</span>';
+
+  // Boutons Tout / Aucun / Exclure bots
+  const btnAll = document.createElement('div');
+  btnAll.className = 'repo-chip active';
+  btnAll.style.cssText = 'background:var(--surface2);border-color:var(--accent2);color:var(--accent2)';
+  btnAll.textContent = 'Tous';
+  btnAll.onclick = () => {
+    activeAccounts = new Set(logins);
+    wrap.querySelectorAll('.account-chip').forEach(c => c.classList.add('active'));
+    renderAll();
+  };
+  wrap.appendChild(btnAll);
+
+  const btnNone = document.createElement('div');
+  btnNone.className = 'repo-chip';
+  btnNone.style.cssText = 'background:var(--surface2);border-color:var(--border);color:var(--text-muted)';
+  btnNone.textContent = 'Aucun';
+  btnNone.onclick = () => {
+    activeAccounts = new Set();
+    wrap.querySelectorAll('.account-chip').forEach(c => c.classList.remove('active'));
+    renderAll();
+  };
+  wrap.appendChild(btnNone);
+
+  const hasBots = logins.some(isBot);
+  if (hasBots) {
+    const btnNoBots = document.createElement('div');
+    btnNoBots.className = 'repo-chip';
+    btnNoBots.style.cssText = 'background:rgba(255,107,53,0.1);border-color:var(--accent3);color:var(--accent3)';
+    btnNoBots.textContent = '⊘ Exclure bots';
+    btnNoBots.onclick = () => {
+      logins.forEach(l => {
+        if (isBot(l)) activeAccounts.delete(l);
+        else activeAccounts.add(l);
+      });
+      wrap.querySelectorAll('.account-chip').forEach(c => {
+        c.classList.toggle('active', activeAccounts.has(c.dataset.login));
+      });
+      renderAll();
+    };
+    wrap.appendChild(btnNoBots);
+  }
+
+  // Séparateur
+  const sep = document.createElement('span');
+  sep.style.cssText = 'width:1px;height:20px;background:var(--border);flex-shrink:0';
+  wrap.appendChild(sep);
+
+  logins.forEach(login => {
+    const chip = document.createElement('div');
+    chip.className = 'repo-chip account-chip active';
+    chip.dataset.login = login;
+    const bot = isBot(login);
+    if (bot) chip.style.cssText = 'border-color:rgba(255,107,53,0.4);color:var(--accent3);opacity:0.8';
+    chip.innerHTML = bot
+      ? `<span style="opacity:0.6;font-size:10px">🤖</span> ${login}`
+      : login;
+    chip.onclick = () => {
+      if (activeAccounts.has(login)) { activeAccounts.delete(login); chip.classList.remove('active'); }
+      else { activeAccounts.add(login); chip.classList.add('active'); }
+      renderAll();
+    };
+    wrap.appendChild(chip);
+  });
+}
+
 // ── FILTER DATA ──
 function filteredCommits() {
   if (!allData) return {};
   const cutoff = new Date(Date.now() - currentDays * 86400000);
   const result = {};
   Object.entries(allData.commitMap).forEach(([login, commits]) => {
+    if (!activeAccounts.has(login)) return;
     const filtered = commits.filter(c => activeRepos.has(c.repo) && new Date(c.date) >= cutoff);
     if (filtered.length) result[login] = filtered;
   });
@@ -948,7 +1081,11 @@ function filteredCommits() {
 function filteredPRs() {
   if (!allData) return [];
   const cutoff = new Date(Date.now() - currentDays * 86400000);
-  return allData.prList.filter(pr => activeRepos.has(pr.repoName) && new Date(pr.created_at) >= cutoff);
+  return allData.prList.filter(pr =>
+    activeRepos.has(pr.repoName) &&
+    new Date(pr.created_at) >= cutoff &&
+    activeAccounts.has(pr.user?.login)
+  );
 }
 
 // ── RENDER ALL ──
@@ -957,12 +1094,13 @@ function renderAll() {
   const commits = filteredCommits();
   const prs = filteredPRs();
 
-  // KPIs
   const totalCommits = Object.values(commits).reduce((s, a) => s + a.length, 0);
   const prOpen = prs.filter(p => p.state === 'open').length;
   const prMerged = prs.filter(p => p.merged_at).length;
   const prClosed = prs.filter(p => p.state === 'closed' && !p.merged_at).length;
-  const totalReviews = Object.values(allData.reviewMap).reduce((s, v) => s + v, 0);
+  const totalReviews = Object.entries(allData.reviewMap)
+    .filter(([l]) => activeAccounts.has(l))
+    .reduce((s, [, v]) => s + v, 0);
 
   document.getElementById('kpiRepos').textContent = activeRepos.size;
   document.getElementById('kpiCommits').textContent = totalCommits.toLocaleString('fr');
@@ -1038,10 +1176,21 @@ function getWeekNumber(d) {
 
 // ── DEV CHART ──
 function renderDevChart(commits) {
-  const sorted = Object.entries(commits).sort((a, b) => b[1].length - a[1].length).slice(0, 10);
+  // Agréger auteur + co-auteur par dev
+  const totals = {};
+  const authored = {};
+  const coauthored = {};
+  Object.entries(commits).forEach(([login, entries]) => {
+    totals[login] = entries.length;
+    authored[login] = entries.filter(e => e.type === 'author').length;
+    coauthored[login] = entries.filter(e => e.type === 'coauthor').length;
+  });
+
+  const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 10);
   const labels = sorted.map(([l]) => l);
-  const values = sorted.map(([, c]) => c.length);
-  const colors = ['#00e5a0','#0088ff','#ff6b35','#c77dff','#ffd166','#ef476f','#06d6a0','#118ab2','#073b4c','#f4a261'];
+  const valAuthored = sorted.map(([l]) => authored[l] || 0);
+  const valCoauthored = sorted.map(([l]) => coauthored[l] || 0);
+  const colors = ['#00e5a0','#0088ff','#ff6b35','#c77dff','#ffd166','#ef476f','#06d6a0','#118ab2','#8ecae6','#f4a261'];
 
   if (charts.dev) charts.dev.destroy();
   const ctx = document.getElementById('devChart').getContext('2d');
@@ -1049,22 +1198,41 @@ function renderDevChart(commits) {
     type: 'bar',
     data: {
       labels,
-      datasets: [{
-        label: 'Commits',
-        data: values,
-        backgroundColor: colors.map(c => c + '33'),
-        borderColor: colors,
-        borderWidth: 1.5,
-        borderRadius: 4,
-      }]
+      datasets: [
+        {
+          label: 'Auteur principal',
+          data: valAuthored,
+          backgroundColor: colors.map(c => c + '55'),
+          borderColor: colors,
+          borderWidth: 1.5,
+          borderRadius: 4,
+          stack: 'commits',
+        },
+        {
+          label: 'Co-auteur',
+          data: valCoauthored,
+          backgroundColor: colors.map(c => c + '22'),
+          borderColor: colors.map(c => c + '88'),
+          borderWidth: 1,
+          borderRadius: 4,
+          borderDash: [4, 2],
+          stack: 'commits',
+        }
+      ]
     },
     options: {
       indexAxis: 'y',
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'bottom',
+          labels: { color: '#8896b0', font: { family: "'IBM Plex Mono'", size: 11 }, boxWidth: 12, padding: 12 }
+        }
+      },
       scales: {
-        x: { grid: { color: 'rgba(30,39,54,0.6)' }, ticks: { color: '#5a6680', font: { family: "'IBM Plex Mono'" } } },
-        y: { grid: { display: false }, ticks: { color: '#8896b0', font: { family: "'IBM Plex Mono'", size: 11 } } }
+        x: { stacked: true, grid: { color: 'rgba(30,39,54,0.6)' }, ticks: { color: '#5a6680', font: { family: "'IBM Plex Mono'" } } },
+        y: { stacked: true, grid: { display: false }, ticks: { color: '#8896b0', font: { family: "'IBM Plex Mono'", size: 11 } } }
       }
     }
   });
@@ -1100,28 +1268,41 @@ function renderPRChart(open, merged, closed) {
 
 // ── DEV TABLE ──
 function renderDevTable(commits) {
-  const devs = Object.entries(commits).sort((a, b) => b[1].length - a[1].length);
-  const maxCommits = devs[0]?.[1].length || 1;
-  const colors = ['#00e5a0','#0088ff','#ff6b35','#c77dff','#ffd166','#ef476f','#06d6a0','#118ab2','#073b4c','#f4a261'];
+  // Calculer les stats par dev
+  const devStats = {};
+  Object.entries(commits).forEach(([login, entries]) => {
+    const authored  = entries.filter(e => e.type === 'author').length;
+    const coauthored = entries.filter(e => e.type === 'coauthor').length;
+    devStats[login] = { authored, coauthored, total: authored + coauthored, entries };
+  });
+
+  const devs = Object.entries(devStats).sort((a, b) => b[1].total - a[1].total);
+  const maxTotal = devs[0]?.[1].total || 1;
+  const colors = ['#00e5a0','#0088ff','#ff6b35','#c77dff','#ffd166','#ef476f','#06d6a0','#118ab2','#8ecae6','#f4a261'];
 
   if (!devs.length) {
     document.getElementById('devTableWrap').innerHTML = `<div class="empty-state"><div class="empty-icon">⬡</div><div class="empty-title">Aucun commit sur la période</div></div>`;
     return;
   }
 
-  const rows = devs.slice(0, 20).map(([login, c], i) => {
-    const reposSet = new Set(c.map(x => x.repo));
+  const rows = devs.slice(0, 20).map(([login, stats], i) => {
+    const reposSet = new Set(stats.entries.map(x => x.repo));
     const prs = filteredPRs().filter(p => p.user?.login === login).length;
     const reviews = allData.reviewMap[login] || 0;
     const color = colors[i % colors.length];
     const initials = login.slice(0, 2).toUpperCase();
-    const pct = Math.round((c.length / maxCommits) * 100);
+    const pct = Math.round((stats.total / maxTotal) * 100);
+    const pctAuthored = stats.total > 0 ? Math.round((stats.authored / stats.total) * 100) : 0;
+
+    // Barre double : auteur principal (plein) + co-auteur (hachuré)
+    const coBarPct = stats.total > 0 ? Math.round((stats.coauthored / stats.total) * 100) : 0;
+    const authorBarPct = pct - Math.round(coBarPct * pct / 100);
 
     return `
       <tr>
         <td>
           <div class="dev-name">
-            <div class="avatar" style="background:linear-gradient(135deg, ${color}44, ${color}88)">
+            <div class="avatar" style="background:linear-gradient(135deg,${color}44,${color}88)">
               <img src="https://avatars.githubusercontent.com/${login}?s=40" onerror="this.style.display='none'" />
               <span style="position:absolute">${initials}</span>
             </div>
@@ -1130,8 +1311,18 @@ function renderDevTable(commits) {
         </td>
         <td class="bar-cell">
           <div class="bar-wrap">
-            <div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
-            <span class="bar-val">${c.length}</span>
+            <div class="bar-bg" style="position:relative;overflow:visible">
+              <div class="bar-fill" style="width:${pct}%;background:${color};position:relative">
+                ${stats.coauthored > 0 ? `<div style="position:absolute;right:0;top:0;bottom:0;width:${coBarPct}%;background:repeating-linear-gradient(45deg,${color}88,${color}88 2px,transparent 2px,transparent 5px);"></div>` : ''}
+              </div>
+            </div>
+            <span class="bar-val">${stats.total}</span>
+          </div>
+        </td>
+        <td>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1.6">
+            <div style="color:${color}">${stats.authored} <span style="color:var(--text-muted)">auteur</span></div>
+            ${stats.coauthored > 0 ? `<div style="color:${color}88">${stats.coauthored} <span style="color:var(--text-muted)">co-auteur</span></div>` : ''}
           </div>
         </td>
         <td style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8896b0">${prs}</td>
@@ -1144,11 +1335,17 @@ function renderDevTable(commits) {
   }).join('');
 
   document.getElementById('devTableWrap').innerHTML = `
+    <div style="margin-bottom:12px;display:flex;align-items:center;gap:16px;font-size:11px;color:var(--text-muted);font-family:'IBM Plex Mono',monospace;">
+      <span>Légende :</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="display:inline-block;width:24px;height:4px;background:#00e5a0;border-radius:2px"></span>Auteur principal</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="display:inline-block;width:24px;height:4px;background:repeating-linear-gradient(45deg,#00e5a088,#00e5a088 2px,transparent 2px,transparent 5px);border-radius:2px"></span>Co-auteur</span>
+    </div>
     <table class="dev-table">
       <thead>
         <tr>
           <th>Développeur</th>
-          <th>Commits</th>
+          <th>Activité</th>
+          <th>Commits (détail)</th>
           <th>PRs</th>
           <th>Reviews</th>
           <th>Repos</th>
